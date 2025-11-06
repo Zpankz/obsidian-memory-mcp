@@ -7,13 +7,18 @@ import {
   getEntityNameFromPath,
   sanitizeFilename 
 } from '../utils/pathUtils.js';
-import { 
-  parseMarkdown, 
+import {
+  parseMarkdown,
   generateMarkdown,
   updateMetadata,
   addRelationToContent,
   removeRelationFromContent
 } from '../utils/markdownUtils.js';
+import {
+  extractRelationTypes,
+  extractQualifications,
+  validateAndNormalizeRelation
+} from '../utils/normalizationUtils.js';
 
 export class MarkdownStorageManager {
   private memoryDir: string;
@@ -100,7 +105,8 @@ export class MarkdownStorageManager {
           allRelations.push({
             from: entityName,
             to: rel.to,
-            relationType: rel.relationType
+            relationType: rel.relationType,
+            qualification: rel.qualification
           });
         }
       }
@@ -161,39 +167,116 @@ export class MarkdownStorageManager {
   }
 
   /**
-   * Create new relations and update both source and target files
+   * Get all existing relation types from the graph
    */
-  async createRelations(relations: Relation[]): Promise<Relation[]> {
+  async getExistingRelationTypes(): Promise<string[]> {
     const graph = await this.loadGraph();
+    return extractRelationTypes(graph.relations);
+  }
+
+  /**
+   * Get all existing qualifications from the graph
+   */
+  async getExistingQualifications(): Promise<string[]> {
+    const graph = await this.loadGraph();
+    return extractQualifications(graph.relations);
+  }
+
+  /**
+   * Create new relations with normalization and validation
+   */
+  async createRelations(relations: Relation[]): Promise<{
+    created: Relation[];
+    normalized: Array<{
+      original: Relation;
+      normalized: Relation;
+      suggestions?: {
+        relationType?: string;
+        qualification?: string;
+      };
+    }>;
+  }> {
+    const graph = await this.loadGraph();
+    const existingTypes = extractRelationTypes(graph.relations);
+    const existingQualifications = extractQualifications(graph.relations);
+
     const newRelations: Relation[] = [];
-    
+    const normalizedInfo: Array<{
+      original: Relation;
+      normalized: Relation;
+      suggestions?: { relationType?: string; qualification?: string };
+    }> = [];
+
     for (const relation of relations) {
-      // Check if relation already exists
-      const exists = graph.relations.some(r => 
-        r.from === relation.from && 
-        r.to === relation.to && 
-        r.relationType === relation.relationType
+      // Validate and normalize the relation
+      const validation = validateAndNormalizeRelation(
+        relation.relationType,
+        relation.qualification,
+        existingTypes,
+        existingQualifications
       );
-      
+
+      // Create the normalized relation
+      const normalizedRelation: Relation = {
+        from: relation.from,
+        to: relation.to,
+        relationType: validation.normalizedRelationType,
+        qualification: validation.normalizedQualification,
+      };
+
+      // Track normalization info
+      const info: any = {
+        original: relation,
+        normalized: normalizedRelation,
+      };
+
+      if (validation.relationTypeSuggestion || validation.qualificationSuggestion) {
+        info.suggestions = {};
+        if (validation.relationTypeSuggestion) {
+          info.suggestions.relationType = validation.relationTypeSuggestion;
+          // Use the suggestion instead
+          normalizedRelation.relationType = validation.relationTypeSuggestion;
+        }
+        if (validation.qualificationSuggestion) {
+          info.suggestions.qualification = validation.qualificationSuggestion;
+          // Use the suggestion instead
+          normalizedRelation.qualification = validation.qualificationSuggestion;
+        }
+      }
+
+      normalizedInfo.push(info);
+
+      // Check if relation already exists
+      const exists = graph.relations.some(
+        (r) =>
+          r.from === normalizedRelation.from &&
+          r.to === normalizedRelation.to &&
+          r.relationType === normalizedRelation.relationType &&
+          r.qualification === normalizedRelation.qualification
+      );
+
       if (exists) continue;
-      
+
       // Update the source entity file
-      const fromPath = getEntityPath(relation.from);
+      const fromPath = getEntityPath(normalizedRelation.from);
       try {
         const content = await fs.readFile(fromPath, 'utf-8');
-        const updatedContent = addRelationToContent(content, relation);
+        const updatedContent = addRelationToContent(content, normalizedRelation);
         await fs.writeFile(fromPath, updatedContent, 'utf-8');
-        
-        newRelations.push(relation);
+
+        newRelations.push(normalizedRelation);
       } catch (error) {
         if (error instanceof Error && 'code' in error && (error as any).code === 'ENOENT') {
-          throw new Error(`Entity ${relation.from} not found`);
+          throw new Error(`Entity ${normalizedRelation.from} not found`);
         }
         throw error;
       }
     }
-    
-    return newRelations;
+
+    return {
+      created: newRelations,
+      normalized: normalizedInfo,
+    };
   }
 
   /**

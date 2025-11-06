@@ -14,6 +14,7 @@ interface ParsedMarkdown {
   relations: Array<{
     to: string;
     relationType: string;
+    qualification: string;
   }>;
 }
 
@@ -23,78 +24,62 @@ interface ParsedMarkdown {
 export function parseMarkdown(content: string, entityName: string): ParsedMarkdown {
   const parsed = matter(content);
   const metadata = parsed.data as MarkdownMetadata;
-  
+
   // Extract observations from the content
   const observations: string[] = [];
-  const relations: Array<{ to: string; relationType: string }> = [];
-  
-  // Split content into lines for processing
-  const lines = parsed.content.split('\n');
-  let inObservations = false;
-  let inRelations = false;
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    
-    // Check for section headers
-    if (trimmed === '## Observations' || trimmed === '### Observations') {
-      inObservations = true;
-      inRelations = false;
-      continue;
-    } else if (trimmed === '## Relations' || trimmed === '### Relations') {
-      inObservations = false;
-      inRelations = true;
-      continue;
-    } else if (trimmed.startsWith('##') || trimmed.startsWith('###')) {
-      // Another section started
-      inObservations = false;
-      inRelations = false;
-    }
-    
-    // Extract observations (bullet points)
-    if (inObservations && (trimmed.startsWith('- ') || trimmed.startsWith('* '))) {
-      observations.push(trimmed.substring(2));
-    }
-    
-    // Extract relations (Obsidian links)
-    if (inRelations && (trimmed.startsWith('- ') || trimmed.startsWith('* '))) {
-      const linkMatch = trimmed.match(/\[\[([^:\]]+)(?:::([^\]]+))?\]\]/);
-      if (linkMatch) {
-        if (linkMatch[2]) {
-          // Format: [[relationType::target]]
-          relations.push({
-            to: linkMatch[2],
-            relationType: linkMatch[1]
-          });
-        } else {
-          // Format: [[target]] - default relation type
-          relations.push({
-            to: linkMatch[1],
-            relationType: 'related_to'
-          });
-        }
-      }
-    }
-    
-    // Also check for inline links anywhere in the content
-    const inlineLinks = trimmed.matchAll(/\[\[([^:\]]+)(?:::([^\]]+))?\]\]/g);
-    for (const match of inlineLinks) {
-      if (!inRelations) { // Avoid duplicates from the Relations section
-        if (match[2]) {
-          relations.push({
-            to: match[2],
-            relationType: match[1]
-          });
-        } else {
-          relations.push({
-            to: match[1],
-            relationType: 'mentioned_in'
-          });
+  const relations: Array<{ to: string; relationType: string; qualification: string }> = [];
+
+  // Parse relations from frontmatter (Dendron format: relationType.qualification)
+  const metadataFields = new Set(['entityType', 'created', 'updated']);
+
+  for (const [key, value] of Object.entries(parsed.data)) {
+    // Skip standard metadata fields
+    if (metadataFields.has(key)) continue;
+
+    // Look for keys with format "relationType.qualification"
+    const dotIndex = key.indexOf('.');
+    if (dotIndex > 0 && Array.isArray(value)) {
+      const relationType = key.substring(0, dotIndex);
+      const qualification = key.substring(dotIndex + 1);
+
+      // Parse wikilinks from the array
+      for (const link of value) {
+        if (typeof link === 'string') {
+          const linkMatch = link.match(/\[\[([^\]]+)\]\]/);
+          if (linkMatch) {
+            relations.push({
+              to: linkMatch[1],
+              relationType: relationType,
+              qualification: qualification
+            });
+          }
         }
       }
     }
   }
-  
+
+  // Split content into lines for processing
+  const lines = parsed.content.split('\n');
+  let inObservations = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Check for section headers
+    if (trimmed === '## Observations' || trimmed === '### Observations') {
+      inObservations = true;
+      continue;
+    } else if (trimmed.startsWith('##') || trimmed.startsWith('###')) {
+      // Another section started
+      inObservations = false;
+    }
+
+    // Extract observations (bullet points)
+    if (inObservations && (trimmed.startsWith('- ') || trimmed.startsWith('* '))) {
+      observations.push(trimmed.substring(2));
+    }
+  }
+
   return {
     metadata,
     name: entityName,
@@ -108,20 +93,39 @@ export function parseMarkdown(content: string, entityName: string): ParsedMarkdo
  */
 export function generateMarkdown(entity: Entity, relations: Relation[]): string {
   const now = new Date().toISOString().split('T')[0];
-  
-  // Prepare frontmatter
-  const frontmatter = {
+
+  // Prepare frontmatter with relations in Dendron format
+  const frontmatter: any = {
     entityType: entity.entityType,
     created: now,
     updated: now
   };
-  
+
+  // Add relations to frontmatter using Dendron link ontology format
+  const entityRelations = relations.filter(r => r.from === entity.name);
+  if (entityRelations.length > 0) {
+    // Group relations by type and qualification
+    const relationsByTypeAndQual: { [key: string]: string[] } = {};
+    for (const relation of entityRelations) {
+      const dendronKey = `${relation.relationType}.${relation.qualification}`;
+      if (!relationsByTypeAndQual[dendronKey]) {
+        relationsByTypeAndQual[dendronKey] = [];
+      }
+      relationsByTypeAndQual[dendronKey].push(`[[${relation.to}]]`);
+    }
+
+    // Add grouped relations to frontmatter
+    for (const [key, targets] of Object.entries(relationsByTypeAndQual)) {
+      frontmatter[key] = targets;
+    }
+  }
+
   // Build content sections
   let content = matter.stringify('', frontmatter);
-  
+
   // Add title
   content += `# ${entity.name}\n\n`;
-  
+
   // Add observations
   if (entity.observations.length > 0) {
     content += `## Observations\n`;
@@ -130,17 +134,7 @@ export function generateMarkdown(entity: Entity, relations: Relation[]): string 
     }
     content += '\n';
   }
-  
-  // Add relations
-  const entityRelations = relations.filter(r => r.from === entity.name);
-  if (entityRelations.length > 0) {
-    content += `## Relations\n`;
-    for (const relation of entityRelations) {
-      content += `- [[${relation.relationType}::${relation.to}]]\n`;
-    }
-    content += '\n';
-  }
-  
+
   return content;
 }
 
@@ -158,54 +152,62 @@ export function updateMetadata(content: string, updates: Partial<MarkdownMetadat
 }
 
 /**
- * Add a relation link to the content
+ * Add a relation link to the content (in frontmatter using Dendron format)
  */
 export function addRelationToContent(content: string, relation: Relation): string {
-  const lines = content.split('\n');
-  let relationsIndex = -1;
-  let lastRelationIndex = -1;
-  
-  // Find the Relations section
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed === '## Relations' || trimmed === '### Relations') {
-      relationsIndex = i;
-    } else if (relationsIndex !== -1 && (trimmed.startsWith('- ') || trimmed.startsWith('* '))) {
-      lastRelationIndex = i;
-    } else if (relationsIndex !== -1 && trimmed.startsWith('#')) {
-      // Another section started
-      break;
-    }
+  const parsed = matter(content);
+  const frontmatter: any = { ...parsed.data };
+
+  // Create the Dendron-style key (relationType.qualification)
+  const dendronKey = `${relation.relationType}.${relation.qualification}`;
+  const newLink = `[[${relation.to}]]`;
+
+  // Initialize the array if it doesn't exist
+  if (!frontmatter[dendronKey]) {
+    frontmatter[dendronKey] = [];
+  } else if (!Array.isArray(frontmatter[dendronKey])) {
+    // Convert to array if it's not already
+    frontmatter[dendronKey] = [frontmatter[dendronKey]];
   }
-  
-  const newRelationLine = `- [[${relation.relationType}::${relation.to}]]`;
-  
-  if (relationsIndex === -1) {
-    // No Relations section exists, create one
-    lines.push('');
-    lines.push('## Relations');
-    lines.push(newRelationLine);
-  } else if (lastRelationIndex !== -1) {
-    // Add after the last relation
-    lines.splice(lastRelationIndex + 1, 0, newRelationLine);
-  } else {
-    // Add right after the Relations header
-    lines.splice(relationsIndex + 1, 0, newRelationLine);
+
+  // Add the new link if it doesn't already exist
+  if (!frontmatter[dendronKey].includes(newLink)) {
+    frontmatter[dendronKey].push(newLink);
   }
-  
-  return lines.join('\n');
+
+  // Update the 'updated' timestamp
+  frontmatter.updated = new Date().toISOString().split('T')[0];
+
+  return matter.stringify(parsed.content, frontmatter);
 }
 
 /**
- * Remove a relation link from the content
+ * Remove a relation link from the content (from frontmatter using Dendron format)
  */
 export function removeRelationFromContent(content: string, relation: Relation): string {
-  const linkPattern = new RegExp(
-    `^[\\s\\-\\*]*\\[\\[${escapeRegExp(relation.relationType)}::${escapeRegExp(relation.to)}\\]\\]\\s*$`,
-    'gm'
-  );
-  
-  return content.replace(linkPattern, '');
+  const parsed = matter(content);
+  const frontmatter: any = { ...parsed.data };
+
+  // Create the Dendron-style key (relationType.qualification)
+  const dendronKey = `${relation.relationType}.${relation.qualification}`;
+  const linkToRemove = `[[${relation.to}]]`;
+
+  // Remove the link if it exists
+  if (frontmatter[dendronKey] && Array.isArray(frontmatter[dendronKey])) {
+    frontmatter[dendronKey] = frontmatter[dendronKey].filter(
+      (link: string) => link !== linkToRemove
+    );
+
+    // Remove the key entirely if the array is now empty
+    if (frontmatter[dendronKey].length === 0) {
+      delete frontmatter[dendronKey];
+    }
+  }
+
+  // Update the 'updated' timestamp
+  frontmatter.updated = new Date().toISOString().split('T')[0];
+
+  return matter.stringify(parsed.content, frontmatter);
 }
 
 function escapeRegExp(string: string): string {
