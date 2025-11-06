@@ -276,6 +276,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["analysisType"]
         }
       },
+      {
+        name: "query_vault",
+        description: "Query external Obsidian vault using search. Returns entities from the vault that match the query.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Search query to match against vault entity names and types"
+            },
+            includeContent: {
+              type: "boolean",
+              description: "Include observations in results (default: false)"
+            },
+            linkToMCP: {
+              type: "boolean",
+              description: "Suggest connections to MCP entities (default: true)"
+            },
+            limit: {
+              type: "number",
+              description: "Max results to return (default: 50)"
+            }
+          },
+          required: ["query"]
+        }
+      },
     ],
   };
 });
@@ -474,6 +500,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         default:
           throw new Error(`Unsupported analysis type: ${analysisType}`);
       }
+    }
+    case "query_vault": {
+      if (!unifiedIndex) {
+        throw new Error("Unified index not initialized");
+      }
+
+      const query = args.query as string;
+      const includeContent = (args.includeContent as boolean) ?? false;
+      const linkToMCP = (args.linkToMCP as boolean) ?? true;
+      const limit = (args.limit as number) ?? 50;
+
+      // Search vault index
+      const results = await unifiedIndex.search(query);
+
+      const response: any = {
+        results: results.slice(0, limit).map(entity => ({
+          name: entity.name,
+          entityType: entity.entityType,
+          observations: includeContent ? entity.observations : undefined
+        })),
+        totalResults: results.length,
+        vault: true
+      };
+
+      if (linkToMCP && results.length > 0) {
+        // Suggest links to MCP entities
+        const mcpGraph = await storageManager.readGraph();
+        const suggestions: any[] = [];
+
+        for (const vaultEntity of results.slice(0, 10)) {
+          // Find similar MCP entities
+          const similar = mcpGraph.entities.filter(mcpEntity =>
+            mcpEntity.name.toLowerCase().includes(vaultEntity.name.toLowerCase()) ||
+            vaultEntity.name.toLowerCase().includes(mcpEntity.name.toLowerCase())
+          );
+
+          if (similar.length > 0) {
+            suggestions.push({
+              vaultEntity: vaultEntity.name,
+              mcpMatches: similar.map(e => e.name)
+            });
+          }
+        }
+
+        response.suggestedLinks = suggestions;
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(response, null, 2)
+        }]
+      };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
