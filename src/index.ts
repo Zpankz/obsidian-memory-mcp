@@ -14,6 +14,7 @@ import { UnifiedIndex } from './index/UnifiedIndex.js';
 import { VaultDiscovery } from './config/VaultDiscovery.js';
 import { getMemoryDir } from './utils/pathUtils.js';
 import { EntityEnhancer } from './integration/EntityEnhancer.js';
+import { RelationEnhancer } from './integration/RelationEnhancer.js';
 
 // Create Markdown storage manager
 const storageManager = new MarkdownStorageManager();
@@ -269,8 +270,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }]
       };
     }
-    case "create_relations":
-      return { content: [{ type: "text", text: JSON.stringify(await storageManager.createRelations(args.relations as Relation[]), null, 2) }] };
+    case "create_relations": {
+      const relationEnhancer = new RelationEnhancer(unifiedIndex!);
+      const normalizedRelations = await relationEnhancer.normalizeAndValidateMultiple(args.relations as Relation[]);
+
+      const relationsToCreate = normalizedRelations.map(r => r.normalized);
+      const result = await storageManager.createRelations(relationsToCreate);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ...result,
+            normalization: normalizedRelations.map(r => ({
+              original: r.original,
+              normalized: r.normalized,
+              suggestions: r.suggestions
+            }))
+          }, null, 2)
+        }]
+      };
+    }
     case "add_observations":
       return { content: [{ type: "text", text: JSON.stringify(await storageManager.addObservations(args.observations as { entityName: string; contents: string[] }[]), null, 2) }] };
     case "delete_entities":
