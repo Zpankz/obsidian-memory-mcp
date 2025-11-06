@@ -8,9 +8,50 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { Entity, Relation } from './types.js';
 import { MarkdownStorageManager } from './storage/MarkdownStorageManager.js';
+import { MCPMemoryIndexer } from './index/MCPMemoryIndexer.js';
+import { VaultScanner } from './index/VaultScanner.js';
+import { UnifiedIndex } from './index/UnifiedIndex.js';
+import { VaultDiscovery } from './config/VaultDiscovery.js';
+import { getMemoryDir } from './utils/pathUtils.js';
 
 // Create Markdown storage manager
 const storageManager = new MarkdownStorageManager();
+
+// Initialize datacore integration
+let unifiedIndex: UnifiedIndex | null = null;
+
+async function initializeDatacore(): Promise<UnifiedIndex> {
+  console.error('Initializing datacore integration...');
+
+  // 1. Initialize MCP memory indexer
+  const memoryPath = getMemoryDir();
+  const mcpIndex = await MCPMemoryIndexer.create(memoryPath);
+  console.error('✓ MCP memory indexer ready');
+
+  // 2. Discover external vaults
+  const discovery = new VaultDiscovery();
+  const vaults = await discovery.scanForVaults();
+  console.error(`Found ${vaults.length} Obsidian vault(s)`);
+
+  let vaultIndex: VaultScanner | null = null;
+
+  if (vaults.length > 0) {
+    const selectedPath = await discovery.selectVault(vaults);
+    if (selectedPath) {
+      vaultIndex = await VaultScanner.create(selectedPath);
+      const selectedVault = vaults.find(v => v.path === selectedPath);
+      console.error(`✓ Connected to vault: ${selectedVault?.name}`);
+    }
+  } else {
+    console.error('⚠ No external vault found, operating in MCP-only mode');
+  }
+
+  // 3. Create unified index
+  const unified = new UnifiedIndex(mcpIndex, vaultIndex);
+  console.error('✓ Datacore integration ready');
+
+  return unified;
+}
 
 
 // The server instance and tools exposed to Claude
@@ -235,6 +276,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main() {
+  // Initialize datacore integration
+  unifiedIndex = await initializeDatacore();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Knowledge Graph MCP Server running on stdio (storage: markdown)");
