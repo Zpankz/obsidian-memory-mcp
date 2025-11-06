@@ -57,7 +57,9 @@ const QUALIFICATION_SYNONYMS: { [key: string]: string } = {
 /**
  * Normalize a string: lowercase, trim, replace spaces/dashes with underscores
  */
-export function normalizeString(str: string): string {
+export function normalizeString(str: string | undefined | null): string {
+  if (!str) return '';
+
   return str
     .toLowerCase()
     .trim()
@@ -69,7 +71,9 @@ export function normalizeString(str: string): string {
 /**
  * Normalize a relation type using synonym mapping
  */
-export function normalizeRelationType(relationType: string): string {
+export function normalizeRelationType(relationType: string | undefined | null): string {
+  if (!relationType) return '';
+
   const normalized = normalizeString(relationType);
   return RELATION_TYPE_SYNONYMS[normalized] || normalized;
 }
@@ -77,7 +81,9 @@ export function normalizeRelationType(relationType: string): string {
 /**
  * Normalize a qualification using synonym mapping
  */
-export function normalizeQualification(qualification: string): string {
+export function normalizeQualification(qualification: string | undefined | null): string {
+  if (!qualification) return '';
+
   const normalized = normalizeString(qualification);
   return QUALIFICATION_SYNONYMS[normalized] || normalized;
 }
