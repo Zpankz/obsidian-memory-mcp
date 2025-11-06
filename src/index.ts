@@ -15,6 +15,7 @@ import { VaultDiscovery } from './config/VaultDiscovery.js';
 import { getMemoryDir } from './utils/pathUtils.js';
 import { EntityEnhancer } from './integration/EntityEnhancer.js';
 import { RelationEnhancer } from './integration/RelationEnhancer.js';
+import { GraphAnalytics } from './analytics/GraphAnalytics.js';
 
 // Create Markdown storage manager
 const storageManager = new MarkdownStorageManager();
@@ -239,6 +240,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["names"],
         },
       },
+      {
+        name: "get_relation_properties",
+        description: "Get all existing relation types and qualifications from the knowledge graph. Use this to check what properties already exist before creating new relations.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "analyze_graph",
+        description: "Run graph analytics and return insights about the knowledge graph structure",
+        inputSchema: {
+          type: "object",
+          properties: {
+            analysisType: {
+              type: "string",
+              enum: ["centrality", "communities", "paths", "temporal", "predictions"],
+              description: "Type of analysis to perform"
+            },
+            entityName: {
+              type: "string",
+              description: "Entity name (required for path/prediction analysis)"
+            },
+            targetEntity: {
+              type: "string",
+              description: "Target entity (required for path analysis)"
+            },
+            options: {
+              type: "object",
+              description: "Analysis-specific options (maxHops, topK, etc.)"
+            }
+          },
+          required: ["analysisType"]
+        }
+      },
     ],
   };
 });
@@ -308,6 +345,136 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(await storageManager.searchNodes(args.query as string), null, 2) }] };
     case "open_nodes":
       return { content: [{ type: "text", text: JSON.stringify(await storageManager.openNodes(args.names as string[]), null, 2) }] };
+    case "get_relation_properties": {
+      const [mcpTypes, mcpQuals] = await Promise.all([
+        storageManager.getExistingRelationTypes(),
+        storageManager.getExistingQualifications(),
+      ]);
+
+      // TODO: Get vault properties when vault index available
+      let vaultTypes: string[] = [];
+      let vaultQuals: string[] = [];
+
+      const allTypes = [...new Set([...mcpTypes, ...vaultTypes])];
+      const allQuals = [...new Set([...mcpQuals, ...vaultQuals])];
+
+      // Compute frequency statistics
+      const typeFreq = new Map<string, number>();
+      const qualFreq = new Map<string, number>();
+
+      const graph = await storageManager.readGraph();
+      for (const relation of graph.relations) {
+        typeFreq.set(relation.relationType, (typeFreq.get(relation.relationType) || 0) + 1);
+        qualFreq.set(relation.qualification, (qualFreq.get(relation.qualification) || 0) + 1);
+      }
+
+      const typeStats = Array.from(typeFreq.entries())
+        .map(([type, count]) => ({ type, count }))
+        .sort((a, b) => b.count - a.count);
+
+      const qualStats = Array.from(qualFreq.entries())
+        .map(([qual, count]) => ({ qualification: qual, count }))
+        .sort((a, b) => b.count - a.count);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            relationTypes: {
+              all: allTypes,
+              mcp: mcpTypes,
+              vault: vaultTypes,
+              statistics: typeStats
+            },
+            qualifications: {
+              all: allQuals,
+              mcp: mcpQuals,
+              vault: vaultQuals,
+              statistics: qualStats
+            },
+            message: "Use these existing properties when creating new relations to maintain consistency.",
+            totalRelations: graph.relations.length
+          }, null, 2)
+        }]
+      };
+    }
+    case "analyze_graph": {
+      const analysisType = args.analysisType as string;
+      const graph = await storageManager.readGraph();
+      const analytics = new GraphAnalytics();
+
+      switch (analysisType) {
+        case "centrality": {
+          const report = analytics.computeCentrality(graph.entities, graph.relations);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                topEntities: report.topEntities,
+                totalEntities: graph.entities.length,
+                avgDegree: Array.from(report.metrics.values())
+                  .reduce((sum, m) => sum + m.totalDegree, 0) / graph.entities.length
+              }, null, 2)
+            }]
+          };
+        }
+
+        case "paths": {
+          if (!args.entityName || !args.targetEntity) {
+            throw new Error("entityName and targetEntity required for path analysis");
+          }
+
+          const maxHops = (args.options as any)?.maxHops || 5;
+          const path = analytics.findPath(
+            args.entityName as string,
+            args.targetEntity as string,
+            graph.relations,
+            maxHops
+          );
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                path: path ? {
+                  entities: path.entities,
+                  length: path.length,
+                  relations: path.relations.map(r => `${r.relationType}.${r.qualification}`)
+                } : null,
+                found: path !== null
+              }, null, 2)
+            }]
+          };
+        }
+
+        case "predictions": {
+          if (!args.entityName) {
+            throw new Error("entityName required for link prediction");
+          }
+
+          const topK = (args.options as any)?.topK || 10;
+          const predictions = analytics.predictLinks(
+            args.entityName as string,
+            graph.entities,
+            graph.relations,
+            topK
+          );
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                predictions,
+                totalPredictions: predictions.length
+              }, null, 2)
+            }]
+          };
+        }
+
+        default:
+          throw new Error(`Unsupported analysis type: ${analysisType}`);
+      }
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
