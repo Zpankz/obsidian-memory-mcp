@@ -13,6 +13,7 @@ import { VaultScanner } from './index/VaultScanner.js';
 import { UnifiedIndex } from './index/UnifiedIndex.js';
 import { VaultDiscovery } from './config/VaultDiscovery.js';
 import { getMemoryDir } from './utils/pathUtils.js';
+import { EntityEnhancer } from './integration/EntityEnhancer.js';
 
 // Create Markdown storage manager
 const storageManager = new MarkdownStorageManager();
@@ -249,8 +250,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   switch (name) {
-    case "create_entities":
-      return { content: [{ type: "text", text: JSON.stringify(await storageManager.createEntities(args.entities as Entity[]), null, 2) }] };
+    case "create_entities": {
+      const enhancer = new EntityEnhancer(unifiedIndex!);
+      const enrichedEntities = await enhancer.enhanceMultiple(args.entities as Entity[]);
+
+      const created = await storageManager.createEntities(args.entities as Entity[]);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            created,
+            enriched: enrichedEntities.map(e => ({
+              name: e.name,
+              extractedMetadata: e.extractedMetadata
+            }))
+          }, null, 2)
+        }]
+      };
+    }
     case "create_relations":
       return { content: [{ type: "text", text: JSON.stringify(await storageManager.createRelations(args.relations as Relation[]), null, 2) }] };
     case "add_observations":
