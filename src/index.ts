@@ -16,6 +16,7 @@ import { getMemoryDir } from './utils/pathUtils.js';
 import { EntityEnhancer } from './integration/EntityEnhancer.js';
 import { RelationEnhancer } from './integration/RelationEnhancer.js';
 import { GraphAnalytics } from './analytics/GraphAnalytics.js';
+import { BidirectionalEngine } from './inference/BidirectionalEngine.js';
 
 // Create Markdown storage manager
 const storageManager = new MarkdownStorageManager();
@@ -362,9 +363,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     case "create_relations": {
       const relationEnhancer = new RelationEnhancer(unifiedIndex!);
+      const bidirectionalEngine = new BidirectionalEngine();
+
+      // Step 1: Normalize relations
       const normalizedRelations = await relationEnhancer.normalizeAndValidateMultiple(args.relations as Relation[]);
 
-      const relationsToCreate = normalizedRelations.map(r => r.normalized);
+      // Step 2: Create bidirectional pairs (default: enabled)
+      const enableBidirectional = (args as any).bidirectional ?? true;
+      let relationsToCreate = normalizedRelations.map(r => r.normalized);
+
+      if (enableBidirectional) {
+        relationsToCreate = bidirectionalEngine.createMultiplePairs(relationsToCreate);
+      }
+
+      // Step 3: Create all relations
       const result = await storageManager.createRelations(relationsToCreate);
 
       return {
@@ -372,6 +384,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: "text",
           text: JSON.stringify({
             ...result,
+            bidirectionalPairs: enableBidirectional ? Math.floor(relationsToCreate.length / 2) : 0,
             normalization: normalizedRelations.map(r => ({
               original: r.original,
               normalized: r.normalized,
