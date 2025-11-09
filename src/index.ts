@@ -316,18 +316,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (name) {
     case "create_entities": {
       const enhancer = new EntityEnhancer(unifiedIndex!);
-      const enrichedEntities = await enhancer.enhanceMultiple(args.entities as Entity[]);
+      const enableAtomic = (args as any).atomicDecomposition ?? true; // Default: enabled
+      const enrichedEntities = await enhancer.enhanceMultiple(args.entities as Entity[], {
+        enableAtomicDecomposition: enableAtomic
+      });
 
+      // Create core entities
       const created = await storageManager.createEntities(args.entities as Entity[]);
+
+      // Create atomic entities extracted from decomposition
+      const allAtomicEntities: Entity[] = [];
+
+      if (enableAtomic) {
+        for (const enriched of enrichedEntities) {
+          if (enriched.atomicDecomposition) {
+            const { atomicEntities } = enriched.atomicDecomposition;
+
+            if (atomicEntities.length > 0) {
+              const createdAtomic = await storageManager.createEntities(atomicEntities);
+              allAtomicEntities.push(...createdAtomic);
+            }
+          }
+        }
+      }
 
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
             created,
+            atomicEntitiesCreated: allAtomicEntities.map(e => ({ name: e.name, type: e.entityType })),
             enriched: enrichedEntities.map(e => ({
               name: e.name,
-              extractedMetadata: e.extractedMetadata
+              extractedMetadata: e.extractedMetadata,
+              yamlProperties: e.atomicDecomposition?.yamlProperties,
+              atomicCandidates: e.atomicDecomposition?.atomicCandidates.map(c => ({
+                name: c.name,
+                type: c.inferredType,
+                confidence: c.confidence
+              }))
             }))
           }, null, 2)
         }]
