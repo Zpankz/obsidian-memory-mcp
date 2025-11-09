@@ -19,5 +19,12 @@ module.exports = {
   },
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1'
+  },
+  globals: {
+    'ts-jest': {
+      diagnostics: {
+        ignoreCodes: [151002, 2540] // Ignore module resolution warnings
+      }
+    }
   }
 };
