@@ -3,11 +3,11 @@
  * Embeds relations in 384-dimensional semantic space for intelligent matching
  */
 
-import { pipeline, Pipeline } from '@xenova/transformers';
+import { pipeline } from '@xenova/transformers';
 import { Relation } from '../types.js';
 
 export class SemanticRelationIndex {
-  private model: Pipeline | null = null;
+  private model: any | null = null; // Using any due to transformers type issues
   private embeddingsCache = new Map<string, number[]>();
   private initialized = false;
 
