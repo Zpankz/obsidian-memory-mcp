@@ -94,12 +94,33 @@ export function parseMarkdown(content: string, entityName: string): ParsedMarkdo
 export function generateMarkdown(entity: Entity, relations: Relation[]): string {
   const now = new Date().toISOString().split('T')[0];
 
-  // Prepare frontmatter with relations in Dendron format
+  // Prepare frontmatter
   const frontmatter: any = {
     entityType: entity.entityType,
     created: now,
     updated: now
   };
+
+  // Add YAML properties if entity has structured data
+  if (entity.metadata?.yamlProperties) {
+    Object.assign(frontmatter, entity.metadata.yamlProperties);
+  }
+
+  // Add metadata fields
+  if (entity.metadata) {
+    if (entity.metadata.atomic) {
+      frontmatter.atomic = true;
+    }
+    if (entity.metadata.parent_references) {
+      frontmatter.parent_references = entity.metadata.parent_references;
+    }
+    if (entity.metadata.sources) {
+      frontmatter.sources = entity.metadata.sources;
+    }
+    if (entity.metadata.vaultAliases) {
+      frontmatter['aliases.vault'] = entity.metadata.vaultAliases.map(a => `[[${a}]]`);
+    }
+  }
 
   // Add relations to frontmatter using Dendron link ontology format
   const entityRelations = relations.filter(r => r.from === entity.name);
@@ -126,13 +147,18 @@ export function generateMarkdown(entity: Entity, relations: Relation[]): string 
   // Add title
   content += `# ${entity.name}\n\n`;
 
-  // Add observations
-  if (entity.observations.length > 0) {
-    content += `## Observations\n`;
+  // Add observations (only if present - YAML properties replace most observations)
+  if (entity.observations && entity.observations.length > 0) {
+    content += `## Notes\n`;
     for (const observation of entity.observations) {
       content += `- ${observation}\n`;
     }
     content += '\n';
+  }
+
+  // Add atomic decomposition note if this is a core entity
+  if (entity.metadata?.structuredYAML) {
+    content += `\n*Essential structured properties in YAML above. Peripheral concepts as wikilink atomic entities.*\n`;
   }
 
   return content;
