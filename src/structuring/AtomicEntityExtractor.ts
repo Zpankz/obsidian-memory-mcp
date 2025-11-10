@@ -22,7 +22,7 @@ export class AtomicEntityExtractor {
     const candidates = new Map<string, AtomicCandidate>();
 
     for (const prop of parsedProperties) {
-      // Extract wikilinks as atomic entity candidates
+      // Method 1: Extract from wikilinks (existing - highest confidence)
       for (const wikilink of prop.wikilinks) {
         const name = wikilink.replace(/\[\[|\]\]/g, '');
 
@@ -36,6 +36,63 @@ export class AtomicEntityExtractor {
               inferredType: this.inferTypeFromName(name)
             });
           }
+        }
+      }
+
+      // Method 2: Extract from coordination patterns ("X and Y")
+      const sourceText = prop.sourceText;
+      const coordinationPattern = /\b([A-Z][a-zA-Z\s]{2,})\s+and\s+([A-Z][a-zA-Z\s]{2,})\b/g;
+      let match;
+      while ((match = coordinationPattern.exec(sourceText)) !== null) {
+        const concepts = [match[1].trim(), match[2].trim()];
+
+        for (const concept of concepts) {
+          if (!candidates.has(concept) && concept.length > 2 && concept !== parentEntity.name) {
+            candidates.set(concept, {
+              name: concept,
+              confidence: 0.75,
+              reason: 'extracted from coordination pattern',
+              sourceObservation: sourceText,
+              inferredType: this.inferTypeFromName(concept)
+            });
+          }
+        }
+      }
+
+      // Method 3: Extract from comma-separated lists
+      if (sourceText.includes(',')) {
+        // Pattern: Capitalized terms in comma-separated format
+        const items = sourceText.split(',').map(s => s.trim());
+        const capitalizedItems = items.filter(item => /^[A-Z][a-z]/.test(item) && item.length > 2);
+
+        if (capitalizedItems.length >= 2) {
+          for (const item of capitalizedItems) {
+            const cleaned = item.replace(/^(and|or)\s+/i, '').trim();
+            if (!candidates.has(cleaned) && cleaned !== parentEntity.name) {
+              candidates.set(cleaned, {
+                name: cleaned,
+                confidence: 0.70,
+                reason: 'extracted from comma-separated list',
+                sourceObservation: sourceText,
+                inferredType: this.inferTypeFromName(cleaned)
+              });
+            }
+          }
+        }
+      }
+
+      // Method 4: Extract standalone capitalized technical terms
+      const technicalTermPattern = /\b([A-Z][a-z]+(?:\s+[a-z]+){0,2}(?:\s+(?:receptor|channel|enzyme|kinase|pathway|protein|domain|subunit)))\b/g;
+      while ((match = technicalTermPattern.exec(sourceText)) !== null) {
+        const term = match[1].trim();
+        if (!candidates.has(term) && term !== parentEntity.name) {
+          candidates.set(term, {
+            name: term,
+            confidence: 0.80,
+            reason: 'technical term pattern',
+            sourceObservation: sourceText,
+            inferredType: this.inferTypeFromName(term)
+          });
         }
       }
     }
