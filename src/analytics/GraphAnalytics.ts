@@ -134,22 +134,32 @@ export class GraphAnalytics {
   }
 
   predictLinks(entity: string, entities: Entity[], relations: Relation[], topK: number = 10): LinkPrediction[] {
-    // Simple common neighbor approach
+    // Adamic-Adar Index - better for sparse graphs than common neighbors
     const predictions: LinkPrediction[] = [];
 
-    // Build neighbor sets
+    // Build degree map (count total connections for each entity)
+    const degree = new Map<string, number>();
+    for (const e of entities) {
+      degree.set(e.name, 0);
+    }
+    for (const rel of relations) {
+      degree.set(rel.from, (degree.get(rel.from) || 0) + 1);
+      degree.set(rel.to, (degree.get(rel.to) || 0) + 1);
+    }
+
+    // Build neighbor sets (bidirectional - consider both directions for prediction)
     const neighbors = new Map<string, Set<string>>();
     for (const e of entities) {
       neighbors.set(e.name, new Set());
     }
-
     for (const relation of relations) {
       neighbors.get(relation.from)?.add(relation.to);
+      neighbors.get(relation.to)?.add(relation.from); // Bidirectional
     }
 
     const entityNeighbors = neighbors.get(entity) || new Set();
 
-    // For each non-connected entity, count common neighbors
+    // For each non-connected entity, compute Adamic-Adar score
     for (const other of entities) {
       if (other.name === entity) continue;
       if (entityNeighbors.has(other.name)) continue; // Already connected
@@ -158,15 +168,25 @@ export class GraphAnalytics {
       const commonNeighbors = Array.from(entityNeighbors).filter(n => otherNeighbors.has(n));
 
       if (commonNeighbors.length > 0) {
-        const confidence = commonNeighbors.length / Math.sqrt(entityNeighbors.size * otherNeighbors.size);
+        // Adamic-Adar: sum of 1/log(degree(neighbor))
+        let adamicAdarScore = 0;
+        for (const neighbor of commonNeighbors) {
+          const neighborDegree = degree.get(neighbor) || 1;
+          if (neighborDegree > 1) {
+            adamicAdarScore += 1.0 / Math.log(neighborDegree);
+          } else {
+            // Edge case: degree-1 nodes get weight of 1.0
+            adamicAdarScore += 1.0;
+          }
+        }
 
         predictions.push({
           from: entity,
           to: other.name,
-          confidence,
-          method: 'common_neighbor',
+          confidence: adamicAdarScore,
+          method: 'adamic_adar',
           sharedNeighbors: commonNeighbors,
-          explanation: `${commonNeighbors.length} shared connections`
+          explanation: `Adamic-Adar score: ${adamicAdarScore.toFixed(3)} via ${commonNeighbors.length} common neighbors`
         });
       }
     }
