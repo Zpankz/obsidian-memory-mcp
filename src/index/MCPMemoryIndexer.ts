@@ -88,6 +88,60 @@ export class MCPMemoryIndexer implements IndexProvider {
     // TODO: Implement file watcher
   }
 
+  /**
+   * Add entity to index (called when entity is created)
+   */
+  addEntity(entity: Entity): void {
+    this.entities.set(entity.name, entity);
+
+    // Initialize empty relations for this entity
+    if (!this.relations.has(entity.name)) {
+      this.relations.set(entity.name, []);
+    }
+  }
+
+  /**
+   * Remove entity from index (called when entity is deleted)
+   */
+  removeEntity(entityName: string): void {
+    this.entities.delete(entityName);
+    this.relations.delete(entityName);
+
+    // Remove relations pointing to this entity
+    for (const [from, rels] of this.relations) {
+      this.relations.set(
+        from,
+        rels.filter(r => r.to !== entityName)
+      );
+    }
+  }
+
+  /**
+   * Update entity in index (called when observations are added)
+   */
+  updateEntity(entity: Entity): void {
+    this.entities.set(entity.name, entity);
+  }
+
+  /**
+   * Add relation to index (called when relation is created)
+   */
+  addRelation(relation: Relation): void {
+    if (!this.relations.has(relation.from)) {
+      this.relations.set(relation.from, []);
+    }
+    this.relations.get(relation.from)!.push(relation);
+  }
+
+  /**
+   * Rebuild entire index from disk (fallback for consistency)
+   */
+  async rebuild(): Promise<void> {
+    this.entities.clear();
+    this.relations.clear();
+    await this.buildIndex();
+  }
+
   async close(): Promise<void> {
     // Cleanup resources
   }

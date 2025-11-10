@@ -20,12 +20,13 @@ const storageManager = new MarkdownStorageManager();
 
 // Initialize datacore integration
 let unifiedIndex: UnifiedIndex | null = null;
+let mcpIndex: any | null = null; // Store for index updates
 
 async function initializeDatacore(): Promise<UnifiedIndex> {
   console.error('Initializing datacore integration...');
 
   const memoryPath = getMemoryDir();
-  const mcpIndex = await MCPMemoryIndexer.create(memoryPath);
+  mcpIndex = await MCPMemoryIndexer.create(memoryPath);
   console.error('✓ MCP memory indexer ready');
 
   const discovery = new VaultDiscovery();
@@ -201,7 +202,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "knowledge_graph") {
-    const handler = new UnifiedToolHandler(storageManager, unifiedIndex!);
+    const handler = new UnifiedToolHandler(storageManager, unifiedIndex!, mcpIndex);
 
     const result = await handler.execute({
       operation: args.operation as any,

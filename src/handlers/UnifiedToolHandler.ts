@@ -78,7 +78,8 @@ export interface WorkflowResult {
 export class UnifiedToolHandler {
   constructor(
     private storageManager: MarkdownStorageManager,
-    private unifiedIndex: UnifiedIndex
+    private unifiedIndex: UnifiedIndex,
+    private mcpIndex?: any // Optional: for index updates
   ) {}
 
   /**
@@ -257,6 +258,13 @@ export class UnifiedToolHandler {
 
         const created = await this.storageManager.createEntities(entities);
 
+        // Update index with new entities
+        if (this.mcpIndex && 'addEntity' in this.mcpIndex) {
+          for (const entity of created) {
+            this.mcpIndex.addEntity(entity);
+          }
+        }
+
         // Track duplicates
         const duplicates = entities.filter(e => !created.find(c => c.name === e.name));
         const warnings: string[] = [];
@@ -347,6 +355,13 @@ export class UnifiedToolHandler {
 
         await this.storageManager.deleteEntities(entityNames);
 
+        // Update index: remove deleted entities
+        if (this.mcpIndex && 'removeEntity' in this.mcpIndex) {
+          for (const name of existing) {
+            this.mcpIndex.removeEntity(name);
+          }
+        }
+
         return {
           deleted: existing,
           notFound: notFound.length > 0 ? notFound : undefined,
@@ -358,10 +373,23 @@ export class UnifiedToolHandler {
         };
       }
 
-      case 'add_observations':
-        return await this.storageManager.addObservations(
+      case 'add_observations': {
+        const result = await this.storageManager.addObservations(
           params.observations as { entityName: string; contents: string[] }[]
         );
+
+        // Update index with modified entities
+        if (this.mcpIndex && 'updateEntity' in this.mcpIndex) {
+          for (const obs of result) {
+            const entity = await this.unifiedIndex.getEntity(obs.entityName);
+            if (entity) {
+              this.mcpIndex.updateEntity(entity);
+            }
+          }
+        }
+
+        return result;
+      }
 
       case 'delete_observations':
         // Support both 'observations' (consistent) and 'deletions' (legacy) parameter names
@@ -417,6 +445,13 @@ export class UnifiedToolHandler {
         }
 
         const result = await this.storageManager.createRelations(toCreate);
+
+        // Update index with new relations
+        if (this.mcpIndex && 'addRelation' in this.mcpIndex) {
+          for (const relation of result.created) {
+            this.mcpIndex.addRelation(relation);
+          }
+        }
 
         // Count actual forward vs inverse created
         let forwardCount = 0;
