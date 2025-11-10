@@ -270,13 +270,37 @@ export class UnifiedToolHandler {
         }
 
         return {
-          created,
-          atomicEntitiesCreated: allAtomicEntities,
+          created: created.map(e => ({
+            name: e.name,
+            entityType: e.entityType,
+            observationsCount: e.observations.length
+          })),
+          atomicEntitiesCreated: allAtomicEntities.map(e => ({
+            name: e.name,
+            entityType: e.entityType,
+            parentReferences: e.metadata?.parent_references || []
+          })),
           enriched: enriched.map(e => ({
             name: e.name,
-            yamlProperties: e.atomicDecomposition?.yamlProperties,
-            atomicCandidates: e.atomicDecomposition?.atomicCandidates
-          }))
+            extractedMetadata: {
+              links: e.extractedMetadata.links.map(l => l.target),
+              tags: e.extractedMetadata.tags,
+              suggestedRelationsCount: e.extractedMetadata.suggestedRelations.length
+            },
+            yamlProperties: e.atomicDecomposition?.yamlProperties || null,
+            atomicCandidates: e.atomicDecomposition?.atomicCandidates?.map(c => ({
+              name: c.name,
+              inferredType: c.inferredType,
+              confidence: c.confidence,
+              reason: c.reason
+            })) || [],
+            atomicDecompositionApplied: !!e.atomicDecomposition
+          })),
+          summary: {
+            entitiesCreated: created.length,
+            atomicEntitiesCreated: allAtomicEntities.length,
+            atomicDecompositionEnabled: enableAtomic
+          }
         };
       }
 
@@ -290,8 +314,13 @@ export class UnifiedToolHandler {
         );
 
       case 'delete_observations':
+        // Support both 'observations' (consistent) and 'deletions' (legacy) parameter names
+        const deletionData = params.observations || params.deletions;
+        if (!deletionData) {
+          throw new Error('Parameter "observations" required: array of {entityName, observations}');
+        }
         await this.storageManager.deleteObservations(
-          params.deletions as { entityName: string; observations: string[] }[]
+          deletionData as { entityName: string; observations: string[] }[]
         );
         return { deleted: true };
 
@@ -321,16 +350,42 @@ export class UnifiedToolHandler {
 
         // Create pairs
         let toCreate = normalized.map(r => r.normalized);
+        const originalCount = toCreate.length;
+
+        let pairsCreated = 0;
         if (enableBidirectional) {
+          const beforeBidirectional = toCreate.length;
           toCreate = bidirectionalEngine.createMultiplePairs(toCreate);
+          pairsCreated = (toCreate.length - beforeBidirectional) / 2;
         }
 
         const result = await this.storageManager.createRelations(toCreate);
 
         return {
-          ...result,
-          bidirectionalPairs: enableBidirectional ? Math.floor(toCreate.length / 2) : 0,
-          normalization: normalized
+          created: result.created.map((r, idx) => ({
+            from: r.from,
+            to: r.to,
+            relationType: r.relationType,
+            qualification: r.qualification,
+            direction: idx < originalCount ? 'forward' : 'inverse'
+          })),
+          summary: {
+            totalCreated: result.created.length,
+            forwardRelations: originalCount,
+            inverseRelations: result.created.length - originalCount,
+            bidirectionalEnabled: enableBidirectional,
+            bidirectionalPairsAttempted: pairsCreated,
+            note: enableBidirectional ?
+              `Created ${originalCount} forward + ${result.created.length - originalCount} inverse relations` :
+              `Created ${result.created.length} relations (bidirectional disabled)`
+          },
+          normalization: normalized.map(n => ({
+            original: { type: n.original.relationType, qual: n.original.qualification },
+            normalized: { type: n.normalized.relationType, qual: n.normalized.qualification },
+            changed: n.original.relationType !== n.normalized.relationType ||
+                    n.original.qualification !== n.normalized.qualification,
+            suggestions: n.suggestions
+          }))
         };
       }
 
@@ -383,15 +438,33 @@ export class UnifiedToolHandler {
     params: any,
     context: { [key: string]: any }
   ): Promise<any> {
+    const includeContent = params.includeContent ?? true; // Default: include content
+
     switch (subfunction) {
-      case 'read_graph':
-        return await this.storageManager.readGraph();
+      case 'read_graph': {
+        const graph = await this.storageManager.readGraph();
+        if (!includeContent) {
+          // Strip observations if not requested
+          graph.entities = graph.entities.map(e => ({ ...e, observations: [] }));
+        }
+        return graph;
+      }
 
-      case 'search':
-        return await this.storageManager.searchNodes(params.query as string);
+      case 'search': {
+        const graph = await this.storageManager.searchNodes(params.query as string);
+        if (!includeContent) {
+          graph.entities = graph.entities.map(e => ({ ...e, observations: [] }));
+        }
+        return graph;
+      }
 
-      case 'open':
-        return await this.storageManager.openNodes(params.names as string[]);
+      case 'open': {
+        const graph = await this.storageManager.openNodes(params.names as string[]);
+        if (!includeContent) {
+          graph.entities = graph.entities.map(e => ({ ...e, observations: [] }));
+        }
+        return graph;
+      }
 
       case 'vault': {
         if (!this.unifiedIndex) {

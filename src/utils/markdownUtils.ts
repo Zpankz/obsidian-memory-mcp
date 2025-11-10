@@ -65,8 +65,9 @@ export function parseMarkdown(content: string, entityName: string): ParsedMarkdo
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Check for section headers
-    if (trimmed === '## Observations' || trimmed === '### Observations') {
+    // Check for section headers (support both "Observations" and "Notes")
+    if (trimmed === '## Observations' || trimmed === '### Observations' ||
+        trimmed === '## Notes' || trimmed === '### Notes') {
       inObservations = true;
       continue;
     } else if (trimmed.startsWith('##') || trimmed.startsWith('###')) {

@@ -87,7 +87,10 @@ describe('UnifiedToolHandler', () => {
 
       expect(result.success).toBe(true);
       if ('data' in result) {
-        expect(result.data?.bidirectionalPairs).toBeGreaterThan(0);
+        expect(result.data?.summary?.inverseRelations).toBeGreaterThan(0);
+        expect(result.data?.summary?.bidirectionalEnabled).toBe(true);
+        expect(result.data?.created).toBeDefined();
+        expect(result.data?.created.length).toBeGreaterThan(1); // Should have forward + inverse
       }
     });
 

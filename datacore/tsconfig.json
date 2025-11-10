@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "module": "ESNext",
+    "target": "es2018",
+    "allowJs": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+		"jsxImportSource": "preact",
+    "noImplicitAny": true,
+    "strictFunctionTypes": true,
+    "strictNullChecks": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUnusedLocals": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "downlevelIteration": true,
+    "esModuleInterop": true,
+    "lib": ["dom", "es5", "scripthost", "es2018", "DOM.Iterable"],
+		"paths": {
+      "react": ["preact/compat"],
+      "react-dom": ["preact/compat"]
+    }
+  },
+  "include": ["src/main.ts", "src/index.ts", "src/typings/*.d.ts", "src/test/**/*.ts", "src/test/**/*.tsx"],
+  "jest": {
+    "extensionsToTreatAsEsm": [".ts", ".tsx"],
+    "globals": {
+      "ts-jest": {
+        "useESM": true,
+      }
+    }
+  }
+}
