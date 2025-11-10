@@ -257,6 +257,14 @@ export class UnifiedToolHandler {
 
         const created = await this.storageManager.createEntities(entities);
 
+        // Track duplicates
+        const duplicates = entities.filter(e => !created.find(c => c.name === e.name));
+        const warnings: string[] = [];
+
+        if (duplicates.length > 0) {
+          warnings.push(`${duplicates.length} duplicate entities not created: ${duplicates.map(d => d.name).join(', ')}`);
+        }
+
         const allAtomicEntities: Entity[] = [];
         if (enableAtomic) {
           for (const enrichedEntity of enriched) {
@@ -273,40 +281,82 @@ export class UnifiedToolHandler {
           created: created.map(e => ({
             name: e.name,
             entityType: e.entityType,
-            observationsCount: e.observations.length
+            observations: e.observations, // Return full observations, not just count
+            metadata: e.metadata
           })),
           atomicEntitiesCreated: allAtomicEntities.map(e => ({
             name: e.name,
             entityType: e.entityType,
-            parentReferences: e.metadata?.parent_references || []
+            parentReferences: e.metadata?.parent_references || [],
+            observations: e.observations
           })),
-          enriched: enriched.map(e => ({
-            name: e.name,
-            extractedMetadata: {
-              links: e.extractedMetadata.links.map(l => l.target),
-              tags: e.extractedMetadata.tags,
-              suggestedRelationsCount: e.extractedMetadata.suggestedRelations.length
-            },
-            yamlProperties: e.atomicDecomposition?.yamlProperties || null,
-            atomicCandidates: e.atomicDecomposition?.atomicCandidates?.map(c => ({
-              name: c.name,
-              inferredType: c.inferredType,
-              confidence: c.confidence,
-              reason: c.reason
-            })) || [],
-            atomicDecompositionApplied: !!e.atomicDecomposition
-          })),
+          enriched: enriched.map((e, idx) => {
+            const decomp = e.atomicDecomposition;
+            return {
+              name: e.name,
+              extractedMetadata: {
+                links: e.extractedMetadata.links,
+                tags: e.extractedMetadata.tags,
+                suggestedRelations: e.extractedMetadata.suggestedRelations.map(sr => ({
+                  to: sr.to,
+                  type: sr.relationType,
+                  qualification: sr.qualification,
+                  confidence: sr.confidence,
+                  reason: sr.reason
+                }))
+              },
+              yamlProperties: decomp?.yamlProperties || null,
+              atomicCandidates: decomp?.atomicCandidates || [],
+              atomicDecompositionApplied: !!decomp,
+              debug: enableAtomic ? {
+                observationsProvided: entities[idx].observations.length,
+                propertiesParsed: decomp ? Object.keys(decomp.yamlProperties).length : 0,
+                candidatesFound: decomp?.atomicCandidates.length || 0,
+                atomicEntitiesCreated: decomp?.atomicEntities.length || 0
+              } : undefined
+            };
+          }),
           summary: {
             entitiesCreated: created.length,
+            entitiesRequested: entities.length,
+            duplicatesSkipped: duplicates.length,
             atomicEntitiesCreated: allAtomicEntities.length,
-            atomicDecompositionEnabled: enableAtomic
-          }
+            atomicDecompositionEnabled: enableAtomic,
+            note: enableAtomic ?
+              `Atomic decomposition: ${allAtomicEntities.length} atomic entities extracted` :
+              `Atomic decomposition disabled`
+          },
+          warnings: warnings.length > 0 ? warnings : undefined
         };
       }
 
-      case 'delete':
-        await this.storageManager.deleteEntities(params.entityNames as string[]);
-        return { deleted: params.entityNames };
+      case 'delete': {
+        const entityNames = params.entityNames as string[];
+        // Check which entities actually exist
+        const existing: string[] = [];
+        const notFound: string[] = [];
+
+        for (const name of entityNames) {
+          const entity = await this.unifiedIndex.getEntity(name);
+          if (entity) {
+            existing.push(name);
+          } else {
+            notFound.push(name);
+          }
+        }
+
+        await this.storageManager.deleteEntities(entityNames);
+
+        return {
+          deleted: existing,
+          notFound: notFound.length > 0 ? notFound : undefined,
+          summary: {
+            deletedCount: existing.length,
+            notFoundCount: notFound.length,
+            requestedCount: entityNames.length
+          }
+        };
+      }
 
       case 'add_observations':
         return await this.storageManager.addObservations(
@@ -352,14 +402,29 @@ export class UnifiedToolHandler {
         let toCreate = normalized.map(r => r.normalized);
         const originalCount = toCreate.length;
 
-        let pairsCreated = 0;
+        // Track which relations are forward vs inverse
+        const relationDirections: string[] = [];
+
         if (enableBidirectional) {
-          const beforeBidirectional = toCreate.length;
-          toCreate = bidirectionalEngine.createMultiplePairs(toCreate);
-          pairsCreated = (toCreate.length - beforeBidirectional) / 2;
+          const pairs = bidirectionalEngine.createMultiplePairs(toCreate);
+          // Mark directions: first half are forward (original), second half are inverse
+          for (let i = 0; i < pairs.length; i++) {
+            relationDirections.push(i < originalCount ? 'forward' : 'inverse');
+          }
+          toCreate = pairs;
+        } else {
+          relationDirections.push(...toCreate.map(() => 'forward'));
         }
 
         const result = await this.storageManager.createRelations(toCreate);
+
+        // Count actual forward vs inverse created
+        let forwardCount = 0;
+        let inverseCount = 0;
+        for (let i = 0; i < result.created.length && i < relationDirections.length; i++) {
+          if (relationDirections[i] === 'forward') forwardCount++;
+          else inverseCount++;
+        }
 
         return {
           created: result.created.map((r, idx) => ({
@@ -367,17 +432,16 @@ export class UnifiedToolHandler {
             to: r.to,
             relationType: r.relationType,
             qualification: r.qualification,
-            direction: idx < originalCount ? 'forward' : 'inverse'
+            direction: idx < relationDirections.length ? relationDirections[idx] : 'unknown'
           })),
           summary: {
             totalCreated: result.created.length,
-            forwardRelations: originalCount,
-            inverseRelations: result.created.length - originalCount,
+            forwardRelations: forwardCount,
+            inverseRelations: inverseCount,
             bidirectionalEnabled: enableBidirectional,
-            bidirectionalPairsAttempted: pairsCreated,
             note: enableBidirectional ?
-              `Created ${originalCount} forward + ${result.created.length - originalCount} inverse relations` :
-              `Created ${result.created.length} relations (bidirectional disabled)`
+              `Bidirectional mode: ${forwardCount} forward + ${inverseCount} inverse relations created` :
+              `Single direction: ${result.created.length} relations created`
           },
           normalization: normalized.map(n => ({
             original: { type: n.original.relationType, qual: n.original.qualification },
