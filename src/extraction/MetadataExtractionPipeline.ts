@@ -46,8 +46,22 @@ export class MetadataExtractionPipeline {
     // TODO: Extract properties
     const properties: Record<string, any> = {};
 
-    // TODO: Infer relations
+    // NEW: Infer relations from extracted wikilinks
     const suggestedRelations: SuggestedRelation[] = [];
+
+    for (const link of links) {
+      // Infer relation type from context
+      const relationType = this.inferRelationTypeFromContext(link.context);
+
+      suggestedRelations.push({
+        to: link.target,
+        relationType: relationType.type,
+        qualification: relationType.qualification,
+        confidence: link.confidence * relationType.confidence,
+        reason: `Mentioned via [[wikilink]]: ${link.context.substring(0, 50)}...`,
+        sourceText: link.context
+      });
+    }
 
     return {
       ...entity,
@@ -59,5 +73,45 @@ export class MetadataExtractionPipeline {
         suggestedRelations
       }
     };
+  }
+
+  /**
+   * Infer relation type from context around wikilink
+   */
+  private inferRelationTypeFromContext(context: string): {
+    type: string;
+    qualification: string;
+    confidence: number;
+  } {
+    const contextLower = context.toLowerCase();
+
+    // Pattern matching for common contexts
+    if (/\bby\s+\[\[/.test(contextLower)) {
+      return { type: 'authored_by', qualification: 'creator', confidence: 0.85 };
+    }
+    if (/\buses\s+\[\[/.test(contextLower)) {
+      return { type: 'uses', qualification: 'applies', confidence: 0.80 };
+    }
+    if (/\btreats?\s+\[\[/.test(contextLower)) {
+      return { type: 'treats', qualification: 'therapeutic', confidence: 0.90 };
+    }
+    if (/\bdiagnosed\s+with\s+\[\[/.test(contextLower)) {
+      return { type: 'diagnosed_with', qualification: 'condition', confidence: 0.90 };
+    }
+    if (/\bin\s+\[\[/.test(contextLower)) {
+      return { type: 'located_in', qualification: 'spatial', confidence: 0.75 };
+    }
+    if (/\bpublished\s+in\s+\[\[/.test(contextLower)) {
+      return { type: 'published_in', qualification: 'venue', confidence: 0.85 };
+    }
+    if (/\bstudied\s+\[\[|\bresearch.*\[\[/.test(contextLower)) {
+      return { type: 'studies', qualification: 'research_topic', confidence: 0.75 };
+    }
+    if (/\baffects?\s+\[\[/.test(contextLower)) {
+      return { type: 'influences', qualification: 'affects', confidence: 0.70 };
+    }
+
+    // Default: generic mention
+    return { type: 'mentions', qualification: 'referenced_in', confidence: 0.60 };
   }
 }
