@@ -31,11 +31,84 @@ export interface LinkPrediction {
   explanation: string;
 }
 
+export interface CommunityMap {
+  communities: Map<string, string[]>; // communityId → entityNames
+  entityCommunity: Map<string, string>; // entityName → communityId
+  communityCount: number;
+}
+
 export class GraphAnalytics {
   private articleRank: ArticleRank;
 
   constructor() {
     this.articleRank = new ArticleRank();
+  }
+
+  /**
+   * Detect communities using label propagation algorithm
+   */
+  detectCommunities(entities: Entity[], relations: Relation[], maxIterations: number = 100): CommunityMap {
+    // Initialize: each node is its own community
+    const labels = new Map<string, string>();
+    for (const entity of entities) {
+      labels.set(entity.name, entity.name);
+    }
+
+    // Build adjacency (bidirectional)
+    const neighbors = new Map<string, Set<string>>();
+    for (const entity of entities) {
+      neighbors.set(entity.name, new Set());
+    }
+    for (const rel of relations) {
+      neighbors.get(rel.from)?.add(rel.to);
+      neighbors.get(rel.to)?.add(rel.from); // Bidirectional
+    }
+
+    // Iterate until convergence
+    let changed = true;
+    let iteration = 0;
+
+    while (changed && iteration < maxIterations) {
+      changed = false;
+      iteration++;
+
+      for (const entity of entities) {
+        const neighborLabels = new Map<string, number>();
+        const entityNeighbors = neighbors.get(entity.name) || new Set();
+
+        for (const neighbor of entityNeighbors) {
+          const label = labels.get(neighbor);
+          if (label) {
+            neighborLabels.set(label, (neighborLabels.get(label) || 0) + 1);
+          }
+        }
+
+        if (neighborLabels.size > 0) {
+          const mostCommon = Array.from(neighborLabels.entries())
+            .sort((a, b) => b[1] - a[1])[0][0];
+
+          if (labels.get(entity.name) !== mostCommon) {
+            labels.set(entity.name, mostCommon);
+            changed = true;
+          }
+        }
+      }
+    }
+
+    // Build community groups
+    const communities = new Map<string, string[]>();
+    for (const [entityName, communityLabel] of labels) {
+      if (!communities.has(communityLabel)) {
+        communities.set(communityLabel, []);
+      }
+      communities.get(communityLabel)!.push(entityName);
+    }
+
+    return {
+      communities,
+      entityCommunity: labels,
+      communityCount: communities.size
+    };
   }
 
   computeCentrality(entities: Entity[], relations: Relation[]): CentralityReport {

@@ -679,13 +679,36 @@ export class UnifiedToolHandler {
         };
       }
 
-      case 'communities':
-        // TODO: Implement community detection
-        throw new Error('Community detection not yet implemented');
+      case 'communities': {
+        const communityMap = analytics.detectCommunities(graph.entities, graph.relations);
+
+        // Convert Map to plain object for JSON serialization
+        const communitiesArray = Array.from(communityMap.communities.entries()).map(([id, members]) => ({
+          id,
+          members,
+          size: members.length
+        }));
+
+        const entityCommunityArray = Array.from(communityMap.entityCommunity.entries()).map(([entity, community]) => ({
+          entity,
+          community
+        }));
+
+        return {
+          communities: communitiesArray,
+          entityCommunity: entityCommunityArray,
+          communityCount: communityMap.communityCount,
+          summary: {
+            totalCommunities: communityMap.communityCount,
+            averageCommunitySize: communitiesArray.reduce((sum, c) => sum + c.size, 0) / communityMap.communityCount,
+            largestCommunity: communitiesArray.sort((a, b) => b.size - a.size)[0]
+          }
+        };
+      }
 
       case 'temporal':
-        // TODO: Implement temporal analysis
-        throw new Error('Temporal analysis not yet implemented');
+        // TODO: Implement temporal analysis (requires observation versioning)
+        throw new Error('Temporal analysis not yet implemented - requires observation versioning infrastructure');
 
       default:
         throw new Error(`Unknown analytics subfunction: ${subfunction}`);
