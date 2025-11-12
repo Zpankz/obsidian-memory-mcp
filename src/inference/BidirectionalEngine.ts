@@ -127,23 +127,88 @@ export const BIDIRECTIONAL_RULES: RelationRule[] = [
 
 export class BidirectionalEngine {
   /**
-   * Create bidirectional pair for a relation if rule exists
+   * Create bidirectional pair for a relation
+   * Uses predefined rules, semantic inference, or generic fallback
    */
   createRelationPair(relation: Relation): Relation[] {
+    // Try predefined rule first
     const rule = this.findRule(relation.relationType, relation.qualification);
 
-    if (!rule) {
-      return [relation]; // No rule found, single direction only
+    if (rule) {
+      const inverse: Relation = {
+        from: relation.to,
+        to: relation.from,
+        relationType: rule.inverse.type,
+        qualification: rule.inverse.qualification
+      };
+      return [relation, inverse];
     }
 
+    // No predefined rule - use generic inverse
     const inverse: Relation = {
       from: relation.to,
       to: relation.from,
-      relationType: rule.inverse.type,
-      qualification: rule.inverse.qualification
+      relationType: this.inferInverseType(relation.relationType),
+      qualification: this.inferInverseQualification(relation.qualification)
     };
 
     return [relation, inverse];
+  }
+
+  /**
+   * Infer inverse relation type using grammatical transformation
+   */
+  private inferInverseType(relationType: string): string {
+    // Common grammatical patterns for passive voice
+    const passiveTransforms: { [key: string]: string } = {
+      'treats': 'treated_by',
+      'contains': 'contained_in',
+      'creates': 'created_by',
+      'causes': 'caused_by',
+      'produces': 'produced_by',
+      'affects': 'affected_by',
+      'leads': 'led_by',
+      'triggers': 'triggered_by',
+      'activates': 'activated_by',
+      'inhibits': 'inhibited_by',
+      'uses': 'used_by',
+      'applies': 'applied_to',
+      'studies': 'studied_by',
+      'researches': 'researched_by',
+      'manages': 'managed_by',
+      'owns': 'owned_by',
+      'teaches': 'taught_by',
+      'learns': 'learned_from'
+    };
+
+    // Check if we have a grammatical transform
+    if (passiveTransforms[relationType]) {
+      return passiveTransforms[relationType];
+    }
+
+    // Generic fallback: add "_by" suffix if verb-like
+    if (relationType.endsWith('s')) {
+      return `${relationType.slice(0, -1)}_by`; // "treats" → "treat_by"
+    }
+
+    // Last resort: symmetric with "inverse_" prefix
+    return `inverse_${relationType}`;
+  }
+
+  /**
+   * Infer inverse qualification (usually symmetric)
+   */
+  private inferInverseQualification(qualification: string): string {
+    // Most qualifications are symmetric
+    // Only asymmetric ones need transformation
+    const asymmetricTransforms: { [key: string]: string } = {
+      'increases': 'increased_by',
+      'decreases': 'decreased_by',
+      'enhances': 'enhanced_by',
+      'reduces': 'reduced_by'
+    };
+
+    return asymmetricTransforms[qualification] || qualification;
   }
 
   /**

@@ -57,18 +57,22 @@ describe('BidirectionalEngine', () => {
       expect(pair[1].qualification).toBe('member');
     });
 
-    it('should return single relation if no rule exists', () => {
+    it('should create generic inverse for unknown relation types', () => {
       const relation: Relation = {
         from: 'A',
         to: 'B',
-        relationType: 'unknown_type',
-        qualification: 'unknown_qual'
+        relationType: 'teaches',
+        qualification: 'primary'
       };
 
       const pair = engine.createRelationPair(relation);
 
-      expect(pair).toHaveLength(1);
+      expect(pair).toHaveLength(2);
       expect(pair[0]).toEqual(relation);
+      expect(pair[1].from).toBe('B');
+      expect(pair[1].to).toBe('A');
+      expect(pair[1].relationType).toBe('taught_by'); // Grammatical inference
+      expect(pair[1].qualification).toBe('primary'); // Symmetric
     });
   });
 
