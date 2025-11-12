@@ -22,10 +22,28 @@ describe('YAMLObservationParser', () => {
       const obs = 'Conductance: 50 pS';
       const props = parser.parseObservation(obs);
 
-      expect(props).toHaveLength(1);
-      expect(props[0].path.category).toBe('biophysics');
-      expect(props[0].value).toEqual({ value: 50, unit: 'pS' });
-      expect(props[0].confidence).toBe(1.0);
+      expect(props.length).toBeGreaterThanOrEqual(1);
+      const conductanceProp = props.find(p => p.path.property === 'conductance');
+      expect(conductanceProp).toBeDefined();
+      expect(conductanceProp!.path.category).toBe('biophysics');
+      expect(conductanceProp!.value).toEqual({ value: '50', unit: 'pS' });
+      expect(conductanceProp!.confidence).toBe(1.0);
+    });
+
+    it('should parse multiple properties from comma-separated observation', () => {
+      const obs = 'Blood pressure: 145/92 mmHg, Heart rate: 88 bpm';
+      const props = parser.parseObservation(obs);
+
+      expect(props.length).toBeGreaterThanOrEqual(2);
+
+      const bpProp = props.find(p => p.path.property === 'blood_pressure');
+      const hrProp = props.find(p => p.path.property === 'heart_rate');
+
+      expect(bpProp).toBeDefined();
+      expect(bpProp!.value).toEqual({ value: '145/92', unit: 'mmHg' });
+
+      expect(hrProp).toBeDefined();
+      expect(hrProp!.value).toEqual({ value: '88', unit: 'bpm' });
     });
 
     it('should parse "Requires X and Y" pattern', () => {

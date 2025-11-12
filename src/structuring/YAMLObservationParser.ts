@@ -41,21 +41,49 @@ export class YAMLObservationParser {
       });
     }
 
-    // Pattern 2: "Property: value unit" → Typed property
-    const colonPattern = /^(.+?):\s*(\d+(?:\.\d+)?)\s*(\w+)?$/;
-    const colonMatch = observation.match(colonPattern);
-    if (colonMatch) {
-      const [_, key, numValue, unit] = colonMatch;
-      properties.push({
-        path: {
-          category: this.inferCategory(key),
-          property: this.normalizeKey(key)
-        },
-        value: unit ? { value: parseFloat(numValue), unit } : parseFloat(numValue),
-        wikilinks: [],
-        confidence: 1.0,
-        sourceText: observation
-      });
+    // Pattern 2: "Property: value unit" → Typed property (supports multiple in one observation)
+    // Handle observations like: "Blood pressure: 145/92 mmHg, Heart rate: 88 bpm"
+    if (observation.includes(':')) {
+      // Split on commas to handle multiple properties
+      const segments = observation.split(',').map(s => s.trim());
+
+      for (const segment of segments) {
+        const colonPattern = /^(.+?):\s*(.+)$/;
+        const colonMatch = segment.match(colonPattern);
+
+        if (colonMatch) {
+          const [_, key, value] = colonMatch;
+
+          // Try to parse as numeric with unit
+          const numericMatch = value.match(/^(\d+(?:\.\d+)?(?:\/\d+)?)\s*(\w+)?$/);
+
+          if (numericMatch) {
+            const [__, numValue, unit] = numericMatch;
+            properties.push({
+              path: {
+                category: this.inferCategory(key),
+                property: this.normalizeKey(key)
+              },
+              value: unit ? { value: numValue, unit } : numValue,
+              wikilinks: [],
+              confidence: 1.0,
+              sourceText: segment
+            });
+          } else {
+            // Non-numeric value (e.g., "Mechanism: decreases production")
+            properties.push({
+              path: {
+                category: this.inferCategory(key),
+                property: this.normalizeKey(key)
+              },
+              value: this.parseValue(value),
+              wikilinks: this.extractWikilinks(value),
+              confidence: 0.85,
+              sourceText: segment
+            });
+          }
+        }
+      }
     }
 
     // Pattern 3: "Requires X and Y" → List property with references
