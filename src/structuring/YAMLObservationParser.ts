@@ -121,6 +121,173 @@ export class YAMLObservationParser {
       });
     }
 
+    // Pattern 6: "Located/Found in X" → Localization
+    const locationPattern = /(?:located|found|expressed)\s+in\s+(.+)$/i;
+    const locationMatch = observation.match(locationPattern);
+    if (locationMatch) {
+      const location = this.normalizeEntityName(locationMatch[1]);
+      properties.push({
+        path: {
+          category: 'localization',
+          property: 'location'
+        },
+        value: `[[${location}]]`,
+        wikilinks: [`[[${location}]]`],
+        confidence: 0.85,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 7: "Activates/Inhibits X" → Function
+    const functionPattern = /^(?:activates?|inhibits?|regulates?|modulates?)\s+(.+)$/i;
+    const functionMatch = observation.match(functionPattern);
+    if (functionMatch) {
+      const target = this.normalizeEntityName(functionMatch[1]);
+      const action = observation.match(/^(\w+)/i)?.[1].toLowerCase() || 'affects';
+
+      properties.push({
+        path: {
+          category: 'function',
+          property: action
+        },
+        value: `[[${target}]]`,
+        wikilinks: [`[[${target}]]`],
+        confidence: 0.85,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 8: "Measured at/as X" → Measurement
+    const measurementPattern = /measured\s+(?:at|as)\s+(.+)$/i;
+    const measurementMatch = observation.match(measurementPattern);
+    if (measurementMatch) {
+      properties.push({
+        path: {
+          category: 'measurement',
+          property: 'value'
+        },
+        value: this.parseValue(measurementMatch[1]),
+        wikilinks: this.extractWikilinks(measurementMatch[1]),
+        confidence: 0.80,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 9: "Associated with X" → Association
+    const associationPattern = /associated\s+with\s+(.+)$/i;
+    const associationMatch = observation.match(associationPattern);
+    if (associationMatch) {
+      const associated = this.normalizeEntityName(associationMatch[1]);
+      properties.push({
+        path: {
+          category: 'association',
+          property: 'related_to'
+        },
+        value: `[[${associated}]]`,
+        wikilinks: [`[[${associated}]]`],
+        confidence: 0.75,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 10: "Caused by X" → Causation
+    const causationPattern = /caused\s+by\s+(.+)$/i;
+    const causationMatch = observation.match(causationPattern);
+    if (causationMatch) {
+      const cause = this.normalizeEntityName(causationMatch[1]);
+      properties.push({
+        path: {
+          category: 'causation',
+          property: 'cause'
+        },
+        value: `[[${cause}]]`,
+        wikilinks: [`[[${cause}]]`],
+        confidence: 0.85,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 11: "Leads to X" → Outcome
+    const outcomePattern = /leads?\s+to\s+(.+)$/i;
+    const outcomeMatch = observation.match(outcomePattern);
+    if (outcomeMatch) {
+      const outcome = this.normalizeEntityName(outcomeMatch[1]);
+      properties.push({
+        path: {
+          category: 'outcome',
+          property: 'result'
+        },
+        value: `[[${outcome}]]`,
+        wikilinks: [`[[${outcome}]]`],
+        confidence: 0.80,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 12: "Characterized by X" → Characteristics
+    const characteristicPattern = /characterized\s+by\s+(.+)$/i;
+    const characteristicMatch = observation.match(characteristicPattern);
+    if (characteristicMatch) {
+      properties.push({
+        path: {
+          category: 'characteristics',
+          property: 'features'
+        },
+        value: this.parseValue(characteristicMatch[1]),
+        wikilinks: this.extractWikilinks(characteristicMatch[1]),
+        confidence: 0.75,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 13: "Manifests as X" → Manifestation
+    const manifestPattern = /manifests?\s+as\s+(.+)$/i;
+    const manifestMatch = observation.match(manifestPattern);
+    if (manifestMatch) {
+      properties.push({
+        path: {
+          category: 'manifestation',
+          property: 'presentation'
+        },
+        value: this.parseValue(manifestMatch[1]),
+        wikilinks: this.extractWikilinks(manifestMatch[1]),
+        confidence: 0.80,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 14: "Severity: X" → Severity property
+    const severityPattern = /severity:\s*(.+)$/i;
+    const severityMatch = observation.match(severityPattern);
+    if (severityMatch) {
+      properties.push({
+        path: {
+          category: 'clinical',
+          property: 'severity'
+        },
+        value: this.parseValue(severityMatch[1]),
+        wikilinks: [],
+        confidence: 0.85,
+        sourceText: observation
+      });
+    }
+
+    // Pattern 15: "Mechanism: X" → Mechanism description
+    const mechanismPattern = /mechanism:\s*(.+)$/i;
+    const mechanismMatch = observation.match(mechanismPattern);
+    if (mechanismMatch) {
+      properties.push({
+        path: {
+          category: 'mechanism',
+          property: 'description'
+        },
+        value: this.parseValue(mechanismMatch[1]),
+        wikilinks: this.extractWikilinks(mechanismMatch[1]),
+        confidence: 0.85,
+        sourceText: observation
+      });
+    }
+
     return properties;
   }
 
